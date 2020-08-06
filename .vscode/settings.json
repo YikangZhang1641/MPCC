@@ -61,6 +61,8 @@
     "memory_resource": "cpp",
     "random": "cpp",
     "set": "cpp",
-    "string": "cpp"
+    "string": "cpp",
+    "*.ipp": "cpp",
+    "*.txx": "cpp"
   }
 }
