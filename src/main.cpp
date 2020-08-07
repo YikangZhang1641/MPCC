@@ -60,20 +60,20 @@ DMDict MPCC(std::vector<std::vector<double>>& initial_guess,
             std::vector<std::vector<double>>& ref_path,
             std::vector<std::vector<obstacle>>& obstacle_list) {
   double l = 0.2;
-  int obs_num = obstacle_list.size() / N;
+  int obs_num = obstacle_list.size();
 
   SX horizon_status = SX::vertcat(
       std::vector<SX>{SX::sym("s", n_pos, N), SX::sym("c", n_control, N)});
   SX initial_status = SX::sym("i", n_pos, 1);
   SX horizon_ref = SX::sym("r", n_pos, N);
-  SX obstacle_path = SX::sym("o", n_pos, obs_num * N);
+  SX obstacle_path = SX::sym("o", obs_num * (n_pos + n_sigma), N);
 
   // std::cout << "\nhorizon_status" << horizon_status << std::endl;
   // std::cout << "\ninitial_status" << initial_status << std::endl;
   // std::cout << "\nhorizon_ref" << horizon_ref << std::endl;
-  // std::cout << "\nobstacle_path" << obstacle_path << std::endl;
+  // std::cout << "\nobstacle_path\n" << obstacle_path << std::endl;
 
-  std::vector<double> q({3, 0, 0, 0, 3, 0, 0, 0, 0.1});
+  std::vector<double> q({5, 0, 0, 0, 5, 0, 0, 0, 1});
   Matrix Q = Matrix::reshape(Matrix(q), 3, 3);
 
   std::vector<double> r({0.1, 0, 0, 0.1});
@@ -109,9 +109,26 @@ DMDict MPCC(std::vector<std::vector<double>>& initial_guess,
     obj += SX::mtimes(std::vector<SX>{E.T(), Q, E}) +
            SX::mtimes(std::vector<SX>{dU.T(), R, dU});
 
-    constraints.emplace_back(horizon_status(0, i) - next_state(0));
-    constraints.emplace_back(horizon_status(1, i) - next_state(1));
-    constraints.emplace_back(horizon_status(2, i) - next_state(2));
+    SX obstales_at_time_i =
+        obstacle_path(Slice(i * obs_num * (n_pos + n_sigma),
+                            (i + 1) * obs_num * (n_pos + n_sigma)));
+    // std::cout << "\nobstales_at_time_i\n" << obstales_at_time_i << std::endl;
+
+    for (int obs_id = 0; obs_id < obs_num; obs_id++) {
+      /* obstacle ellipse constraint */
+      SX obs = obstales_at_time_i(
+          Slice(obs_id * (n_pos + n_sigma), (obs_id + 1) * (n_pos + n_sigma)));
+
+      std::cout << "\nobs\n" << obs << std::endl;
+      SX dx = (horizon_status(0, i) - obs(0)) / obs(n_pos + 0);
+      SX dy = (horizon_status(1, i) - obs(1)) / obs(n_pos + 1);
+      constraints.emplace_back(dx * dx + dy * dy);
+    }
+
+    for (int j = 0; j < n_pos; j++) {
+      /* <v,steering> constraint for adjacent pose states */
+      constraints.emplace_back(horizon_status(j, i) - next_state(j));
+    }
 
     SXDict state_trans_input;
     state_trans_input["current_state"] =
@@ -125,13 +142,15 @@ DMDict MPCC(std::vector<std::vector<double>>& initial_guess,
   }
 
   SXDict nlp_prob;
-  SX tmp_p = SX::vertcat(std::vector<SX>{SX::reshape(horizon_ref, -1, 1),
-                                         SX::reshape(initial_status, -1, 1)});
+  std::vector<SX> tmp_p;
+  tmp_p.emplace_back(SX::reshape(horizon_ref, -1, 1));
+  tmp_p.emplace_back(SX::reshape(initial_status, -1, 1));
+  tmp_p.emplace_back(SX::reshape(obstacle_path, -1, 1));
   // std::cout << "ref\n" << horizon_ref << std::endl;
   // std::cout << "tmp_p\n" << tmp_p << std::endl;
 
   nlp_prob["x"] = SX::reshape(horizon_status, -1, 1);  // decision vars
-  nlp_prob["p"] = tmp_p;
+  nlp_prob["p"] = SX::vertcat(tmp_p);
   nlp_prob["f"] = obj;                       // objective
   nlp_prob["g"] = SX::vertcat(constraints);  // constraints
   // std::cout << "\nnlp_prob[x]\n" << nlp_prob["x"] << std::endl;
@@ -139,11 +158,11 @@ DMDict MPCC(std::vector<std::vector<double>>& initial_guess,
   // std::cout << "\nnlp_prob[g]\n" << nlp_prob["g"] << std::endl;
 
   Dict opts_setting;
-  // opts_setting["ipopt.max_iter"] = 500;
+  opts_setting["ipopt.max_iter"] = 500;
   opts_setting["ipopt.print_level"] = 0;
   opts_setting["print_time"] = 0;
-  // opts_setting["ipopt.acceptable_tol"] = 1e-5;
-  // opts_setting["ipopt.acceptable_obj_change_tol"] = 1e-6;
+  opts_setting["ipopt.acceptable_tol"] = 1e-5;
+  opts_setting["ipopt.acceptable_obj_change_tol"] = 1e-6;
 
   Function cost_func = nlpsol("F", "ipopt", nlp_prob, opts_setting);
 
@@ -163,37 +182,51 @@ DMDict MPCC(std::vector<std::vector<double>>& initial_guess,
   }
 
   for (int i = 0; i < N; i++) {
-    // for (int obs_id = 0; obs_id * N < obstacle_list.size(); obs_id++) {
-    //   lbg.emplace_back(1);
-    //   ubg.emplace_back(std::numeric_limits<double>::max());
-    // }
+    for (int obs_id = 0; obs_id < obs_num; obs_id++) {
+      lbg.emplace_back(1);
+      ubg.emplace_back(std::numeric_limits<double>::max());
+    }
 
-    lbg.emplace_back(0);
-    ubg.emplace_back(0);
-    lbg.emplace_back(0);
-    ubg.emplace_back(0);
-    lbg.emplace_back(0);
-    ubg.emplace_back(0);
+    for (int _ = 0; _ < n_pos; _++) {
+      lbg.emplace_back(0);
+      ubg.emplace_back(0);
+    }
   }
+
+  DM dm_obstacle_list(obs_num * (n_pos + n_sigma), N);
+  for (int i = 0; i < obstacle_list.size(); i++) {
+    for (int j = 0; j < N; j++) {
+      dm_obstacle_list(i * (n_pos + n_sigma) + 0, j) = obstacle_list[i][j].x;
+      dm_obstacle_list(i * (n_pos + n_sigma) + 1, j) = obstacle_list[i][j].y;
+      dm_obstacle_list(i * (n_pos + n_sigma) + 2, j) = obstacle_list[i][j].phi;
+      dm_obstacle_list(i * (n_pos + n_sigma) + 3, j) =
+          obstacle_list[i][j].sigma_x;
+      dm_obstacle_list(i * (n_pos + n_sigma) + 4, j) =
+          obstacle_list[i][j].sigma_y;
+    }
+  }
+  // std::cout << "\ndm_obstacle_list\n" << dm_obstacle_list << std::endl;
+
+  DM p = DM::vertcat(std::vector<DM>{DM::reshape(DM(ref_path).T(), -1, 1),
+                                     DM(initial_guess).T()(Slice(0, 3)),
+                                     DM::reshape(dm_obstacle_list, -1, 1)});
 
   DMDict guess;
   guess["x0"] = DM::reshape(DM(initial_guess).T(), -1, 1);
   // std::cout << "\ninitial_guess" << DM(initial_guess).T() << std::endl;
   // std::cout << "\nx0\n" << guess["x0"] << std::endl;
 
-  DM p = DM::vertcat(std::vector<DM>{DM::reshape(DM(ref_path).T(), -1, 1),
-                                     DM(initial_guess).T()(Slice(0, 3))});
-
   // std::cout << "\nref_path " << ref_path << std::endl;
-  // std::cout << "\nDM::reshape(DM(ref_path) " << DM(ref_path).T() <<
-  // std::endl; std::cout << "\nreshape\n"
+  // std::cout << "\nDM::reshape(DM(ref_path) " << DM(ref_path).T() << std::endl;
+  // std::cout << "\nreshape\n"
   //           << DM::reshape(DM(ref_path).T(), -1, 1) << std::endl;
   // std::cout << "\ninitial_guess\n" << DM(initial_guess).T() << std::endl;
-  // std::cout << "\ninitial\n" << DM(initial_guess).T()(Slice(0, 3)) <<
-  // std::endl; std::cout << "\np\n" << p << std::endl; std::cout << "\nubx\n"
-  // << ubx << std::endl; std::cout << "\nlbx\n" << lbx << std::endl; std::cout
-  // << "\nubg\n" << ubg << std::endl; std::cout << "\nlbg\n" << lbg <<
-  // std::endl;
+  // std::cout << "\ninitial\n" << DM(initial_guess).T()(Slice(0, 3)) << std::endl;
+  // std::cout << "\np\n" << p << std::endl;
+  // std::cout << "\nubx\n" << ubx << std::endl;
+  // std::cout << "\nlbx\n" << lbx << std::endl;
+  // std::cout << "\nubg\n" << ubg << std::endl;
+  // std::cout << "\nlbg\n" << lbg << std::endl;
 
   guess["p"] = p;
   guess["ubx"] = ubx;
@@ -220,9 +253,10 @@ int main(int argc, char* argv[]) {
       N, std::vector<double>(n_pos + n_control, 0));
 
   while (ros::ok()) {
-    // for (int ttt = 0; ttt < 2; ttt++) {
+    auto start = std::chrono::system_clock::now();
     std::vector<std::vector<obstacle>> obstacle_paths =
         GetObstacles(start_time);
+
     std::vector<std::vector<double>> ref_path = GetRefPath(start_time);
 
     DMDict res = MPCC(initial_guess, ref_path, obstacle_paths);
@@ -255,7 +289,12 @@ int main(int argc, char* argv[]) {
     initial_guess[N - 1][2] =
         double(res["x"]((N - 1) * (n_pos + n_control) + 2));
 
-    start_time += dT;
+    start_time += dT / 2;
+    auto end = std::chrono::system_clock::now();
+    double duration =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
+            .count();
+    std::cout << "duration " << duration << std::endl;
     rate.sleep();
   }
 }

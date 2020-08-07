@@ -1,5 +1,6 @@
 #include <casadi/casadi.hpp>
 #include <iostream>
+#include <chrono>
 
 #include "geometry_msgs/Point.h"
 #include "geometry_msgs/PoseStamped.h"
@@ -58,9 +59,16 @@ void GenerateMovement(std::vector<std::vector<obstacle>>& obs_list, double v,
 std::vector<std::vector<obstacle>> GetObstacles(double start_time) {
   std::vector<std::vector<obstacle>> obs_list;
   GenerateMovement(obs_list, 1.5, start_time, 10, 0, -PI);
-  GenerateMovement(obs_list, 3.0, start_time, 5, -0.5, -PI);
-  GenerateMovement(obs_list, 1.0, start_time, 3, -3, PI / 6.0);
-  GenerateMovement(obs_list, 0.4, start_time, 2, 0, 0);
+  GenerateMovement(obs_list, 0.8, start_time, 18, -0.5, -PI);
+  GenerateMovement(obs_list, 1.0, start_time, 12, -3, PI *5 / 6);
+  GenerateMovement(obs_list, 0.4, start_time, 2, 0.2, 0);
+
+  GenerateMovement(obs_list, 0.9, start_time, 2, -3, PI/10);
+  GenerateMovement(obs_list, 0.5, start_time, 6, 7, -PI/2);
+  GenerateMovement(obs_list, 1.3, start_time, 3, 4,  -PI / 3.0);
+  GenerateMovement(obs_list, 0.6, start_time, 4, -0.3, 0);
+
+  GenerateMovement(obs_list, 1.3, start_time, 3, 0, 0);
 
   return obs_list;
 }
@@ -70,8 +78,8 @@ std::vector<std::vector<double>> GetRefPath(double start_time) {
   for (int i = 0; i < N; i++) {
     double t = start_time + i * dT;
     std::vector<double> pt;
-    pt.emplace_back(0 + t * 0.5);
-    pt.emplace_back(0);
+    pt.emplace_back(0 + t * 1.5);
+    pt.emplace_back(0 + 0.5*std::sin(t*1.5));
     pt.emplace_back(0);
     path.emplace_back(pt);
   }
@@ -96,8 +104,8 @@ visualization_msgs::MarkerArray plot_ref(
     marker.pose.position.x = ref_path[i][0];
     marker.pose.position.y = ref_path[i][1];
 
-    marker.pose.orientation.z = std::cos(ref_path[i][2] / 2.0);
-    marker.pose.orientation.w = std::sin(ref_path[i][2] / 2.0);
+    marker.pose.orientation.w = std::cos(ref_path[i][2] / 2.0);
+    marker.pose.orientation.z = std::sin(ref_path[i][2] / 2.0);
 
     marker.color.r = 1;
     marker.color.a = 1;
@@ -125,8 +133,8 @@ visualization_msgs::MarkerArray plot_obstacles(
       marker.pose.position.x = obstacle_paths[obs_id][t].x;
       marker.pose.position.y = obstacle_paths[obs_id][t].y;
 
-      marker.pose.orientation.z = std::cos(obstacle_paths[obs_id][t].phi / 2.0);
-      marker.pose.orientation.w =
+      marker.pose.orientation.w = std::cos(obstacle_paths[obs_id][t].phi / 2.0);
+      marker.pose.orientation.z =
           std::sin(obstacle_paths[obs_id][t].phi / 2.0);
 
       marker.color.g = 1;
